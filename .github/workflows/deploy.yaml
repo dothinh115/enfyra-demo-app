@@ -10,12 +10,80 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN || secrets.PAT }}
+          persist-credentials: true
+
+      - name: Check upstream for updates
+        run: |
+          # Add upstream remote if it doesn't exist
+          if ! git remote | grep -q upstream; then
+            git remote add upstream https://github.com/enfyra/app.git
+          else
+            git remote set-url upstream https://github.com/enfyra/app.git
+          fi
+          
+          # Fetch from upstream
+          echo "Fetching from upstream..."
+          git fetch upstream main
+          
+          # Get current HEAD and upstream HEAD
+          CURRENT_HEAD=$(git rev-parse HEAD)
+          UPSTREAM_HEAD=$(git rev-parse upstream/main)
+          
+          echo "Current HEAD: $CURRENT_HEAD"
+          echo "Upstream HEAD: $UPSTREAM_HEAD"
+          
+          # Check if upstream has new commits
+          if [ "$CURRENT_HEAD" = "$UPSTREAM_HEAD" ]; then
+            echo "⏳ No new commits from upstream. Checking origin/main..."
+            
+            # Also check if origin/main has new commits
+            git fetch origin main
+            ORIGIN_HEAD=$(git rev-parse origin/main)
+            
+            if [ "$CURRENT_HEAD" = "$ORIGIN_HEAD" ]; then
+              echo "⏳ No new commits on origin/main either. Skipping deployment."
+              echo "SKIP_DEPLOY=true" >> $GITHUB_ENV
+            else
+              echo "✅ New commits found on origin/main. Will deploy."
+              echo "SKIP_DEPLOY=false" >> $GITHUB_ENV
+            fi
+          else
+            echo "✅ New commits found from upstream! Merging and pushing..."
+            
+            # Merge upstream changes
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            
+            # Try to merge upstream/main into current branch
+            git merge upstream/main --no-edit || {
+              echo "⚠️  Merge conflict detected. Attempting to resolve..."
+              git merge --abort || true
+              # If merge fails, reset to upstream and force push
+              git reset --hard upstream/main
+            }
+            
+            # Push to origin
+            git push origin main || {
+              echo "⚠️  Push failed. This might be due to permissions."
+              echo "Note: Deployment will continue, but upstream changes won't be in origin."
+              echo "You may need to configure a Personal Access Token (PAT) in repository secrets."
+            }
+            
+            echo "SKIP_DEPLOY=false" >> $GITHUB_ENV
+          fi
+
       - name: Install sshpass
         run: |
           sudo apt-get update
           sudo apt-get install -y sshpass
 
       - name: Deploy to VPS via sshpass
+        if: env.SKIP_DEPLOY != 'true'
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
@@ -53,24 +121,65 @@ jobs:
             cd $APP_DIR
             echo "Current directory: $(pwd)"
 
-            # Determine whether new code exists before redeploying
-            CURRENT_HEAD=$($GIT_PATH rev-parse HEAD 2>/dev/null || echo "")
-            REMOTE_HEAD=$($GIT_PATH ls-remote origin main | awk '{print $1}')
-
-            if [ -z "$REMOTE_HEAD" ]; then
-              echo "❌ Unable to determine remote HEAD. Aborting redeploy."
-              exit 1
+            # Ensure upstream remote is configured
+            if ! $GIT_PATH remote | grep -q upstream; then
+              echo "Adding upstream remote..."
+              $GIT_PATH remote add upstream https://github.com/enfyra/app.git || true
+            else
+              echo "Updating upstream remote URL..."
+              $GIT_PATH remote set-url upstream https://github.com/enfyra/app.git || true
             fi
 
-            if [ -n "$CURRENT_HEAD" ] && [ "$CURRENT_HEAD" = "$REMOTE_HEAD" ]; then
-              echo "⏳ No new commits detected on origin/main. Skipping redeploy."
+            # Fetch from both origin and upstream
+            echo "Fetching from origin and upstream..."
+            $GIT_PATH fetch origin main || true
+            $GIT_PATH fetch upstream main || true
+
+            # Determine whether new code exists before redeploying
+            CURRENT_HEAD=$($GIT_PATH rev-parse HEAD 2>/dev/null || echo "")
+            ORIGIN_HEAD=$($GIT_PATH rev-parse origin/main 2>/dev/null || echo "")
+            UPSTREAM_HEAD=$($GIT_PATH rev-parse upstream/main 2>/dev/null || echo "")
+
+            echo "Current HEAD: ${CURRENT_HEAD:-none}"
+            echo "Origin HEAD: ${ORIGIN_HEAD:-none}"
+            echo "Upstream HEAD: ${UPSTREAM_HEAD:-none}"
+
+            # Check if upstream has new commits that aren't in origin
+            NEEDS_UPDATE=false
+            if [ -n "$UPSTREAM_HEAD" ] && [ -n "$CURRENT_HEAD" ] && [ "$UPSTREAM_HEAD" != "$CURRENT_HEAD" ]; then
+              # Check if upstream is ahead
+              if $GIT_PATH merge-base --is-ancestor "$CURRENT_HEAD" "$UPSTREAM_HEAD" 2>/dev/null; then
+                echo "✅ Upstream has new commits. Will merge and deploy."
+                NEEDS_UPDATE=true
+              fi
+            fi
+
+            # Check if origin has new commits
+            if [ -n "$ORIGIN_HEAD" ] && [ -n "$CURRENT_HEAD" ] && [ "$CURRENT_HEAD" != "$ORIGIN_HEAD" ]; then
+              echo "✅ Origin has new commits. Will deploy."
+              NEEDS_UPDATE=true
+            fi
+
+            if [ "$NEEDS_UPDATE" = false ] && [ -n "$CURRENT_HEAD" ]; then
+              echo "⏳ No new commits detected. Skipping redeploy."
               exit 0
             fi
 
-            echo "Pulling latest code... (current: ${CURRENT_HEAD:-none}, remote: $REMOTE_HEAD)"
+            # Pull latest code from origin (which should have upstream merged by GitHub Actions)
+            echo "Pulling latest code... (current: ${CURRENT_HEAD:-none}, origin: ${ORIGIN_HEAD:-none})"
             $GIT_PATH fetch origin main
             $GIT_PATH reset --hard origin/main
             $GIT_PATH clean -fd
+            
+            # If upstream has commits not in origin, merge them
+            if [ -n "$UPSTREAM_HEAD" ] && [ -n "$ORIGIN_HEAD" ] && [ "$UPSTREAM_HEAD" != "$ORIGIN_HEAD" ]; then
+              echo "Merging upstream changes..."
+              $GIT_PATH merge upstream/main --no-edit || {
+                echo "⚠️  Merge conflict. Resetting to upstream..."
+                $GIT_PATH reset --hard upstream/main
+              }
+            fi
+            
             echo "✅ Code updated to latest from git (local changes discarded)"
 
             # Install dependencies with yarn
