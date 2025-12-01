@@ -20,7 +20,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Sync main with upstream beta and push to origin
+      - name: Sync main with upstream main and push to origin
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -33,43 +33,32 @@ jobs:
             git remote add upstream https://github.com/enfyra/app.git
           fi
 
-          echo "Fetching origin and upstream beta/experimental..."
+          echo "Fetching origin and upstream main..."
           git fetch origin main --force
-
-          # Try to find upstream beta-like branch
-          UPSTREAM_REF=""
-          if git fetch upstream beta --force 2>/dev/null; then
-            UPSTREAM_REF="beta"
-          elif git fetch upstream beta/experimental --force 2>/dev/null; then
-            UPSTREAM_REF="beta/experimental"
-          elif git fetch upstream experimental --force 2>/dev/null; then
-            UPSTREAM_REF="experimental"
-          fi
-
-          echo "Using upstream ref: ${UPSTREAM_REF:-none}"
+          git fetch upstream main --force
 
           echo "Checking out main and resetting to origin/main..."
           git checkout main
           git reset --hard origin/main
 
-          if [ -n "$UPSTREAM_REF" ] && git rev-parse --quiet "upstream/$UPSTREAM_REF" >/dev/null; then
-            COMMITS_BEHIND=$(git rev-list --count HEAD.."upstream/$UPSTREAM_REF" 2>/dev/null || echo "0")
-            echo "Commits behind upstream/$UPSTREAM_REF: $COMMITS_BEHIND"
+          if git rev-parse --quiet "upstream/main" >/dev/null; then
+            COMMITS_BEHIND=$(git rev-list --count HEAD.."upstream/main" 2>/dev/null || echo "0")
+            echo "Commits behind upstream/main: $COMMITS_BEHIND"
 
             if [ "$COMMITS_BEHIND" != "0" ]; then
-              echo "🔄 Merging upstream/$UPSTREAM_REF into main..."
-              git merge "upstream/$UPSTREAM_REF" --no-edit --no-ff || {
+              echo "🔄 Merging upstream/main into main..."
+              git merge "upstream/main" --no-edit --no-ff || {
                 echo "⚠️ Merge conflict detected. Retrying with 'theirs' strategy..."
                 git merge --abort 2>/dev/null || true
-                git merge "upstream/$UPSTREAM_REF" --no-edit -X theirs || {
-                  echo "❌ Failed to merge upstream/$UPSTREAM_REF. Keeping origin/main state."
+                git merge "upstream/main" --no-edit -X theirs || {
+                  echo "❌ Failed to merge upstream/main. Keeping origin/main state."
                 }
               }
             else
-              echo "✅ main is already up to date with upstream/$UPSTREAM_REF."
+              echo "✅ main is already up to date with upstream/main."
             fi
           else
-            echo "ℹ️ No upstream beta/experimental branch available. Skipping upstream merge."
+            echo "ℹ️ No upstream/main branch available. Skipping upstream merge."
           fi
 
           # Only push if HEAD differs from origin/main
