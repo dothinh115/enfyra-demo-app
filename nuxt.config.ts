@@ -83,6 +83,7 @@ export default defineNuxtConfig({
               position: fixed !important;
               width: 100% !important;
               height: 100% !important;
+              touch-action: pan-x pan-y !important;
             }
           `,
         },
