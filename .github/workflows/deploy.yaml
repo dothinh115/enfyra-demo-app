@@ -143,12 +143,11 @@ jobs:
             FINAL_COMMIT=$($GIT_PATH rev-parse HEAD 2>/dev/null || echo "unknown")
             echo "✅ Deploying commit: $FINAL_COMMIT"
 
-            # Update latest packages first, then install dependencies
-            echo "Updating latest packages..."
-            $YARN_PATH upgrade @enfyra/sdk-nuxt lodash-es --latest || echo "⚠️  Some packages may not have been updated"
-            
             # Install dependencies with yarn
+            # Note: Removed yarn upgrade to avoid memory issues and stuck processes
             echo "Installing dependencies with yarn..."
+            # Increase Node.js heap size to avoid OOM during yarn install
+            export NODE_OPTIONS="--max-old-space-size=4096"
             $YARN_PATH install
 
             # Ensure environment file exists (CI only verifies presence)
@@ -158,6 +157,8 @@ jobs:
 
             # Build application
             echo "Building application..."
+            # Ensure NODE_OPTIONS is set for build to avoid OOM
+            export NODE_OPTIONS="--max-old-space-size=4096"
             $YARN_PATH build
 
             # Stop PM2 application completely to avoid conflicts
