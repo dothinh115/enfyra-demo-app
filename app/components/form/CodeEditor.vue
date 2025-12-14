@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { StateEffect } from "@codemirror/state";
-
 const props = defineProps<{
   modelValue?: string;
   language?: "javascript" | "vue" | "json" | "html";
@@ -24,32 +22,70 @@ const startHeight = ref(0);
 const previewStyle = ref<{ top: string; left: string; width: string; height: string } | null>(null);
 
 const colorMode = useColorMode();
-const { themeCompartment, themeExtensions } = useCodeMirrorTheme(currentHeight);
-const { getLanguageExtension, getBasicSetup, enfyraSyntaxPlugin } = useCodeMirrorExtensions();
+
+// Lazy load CodeMirror
+const { initCodeMirror, codeMirrorModules, loading: loadingCodeMirror } = useCodeMirrorLazy()
+
+// Initialize theme composable (pass colorMode to avoid double inject)
+const { themeCompartment, themeExtensions, customHighlightStyle } = useCodeMirrorTheme(currentHeight, codeMirrorModules, colorMode);
+
+// Initialize editor composable (can be called early)
 const { code, editorRef, createEditor, watchExtensions, destroyEditor, editorView, updateEditorSize } = useCodeMirrorEditor({
   modelValue: props.modelValue,
   language: props.language,
   height: currentHeight.value,
-  emit
+  emit,
+  codeMirrorModules: codeMirrorModules
 });
 
-const languageExtension = computed(() => getLanguageExtension(props.language));
+// Initialize extensions composable - pass ref so it's reactive
+const { getLanguageExtension, getBasicSetup, enfyraSyntaxPlugin } = useCodeMirrorExtensions(codeMirrorModules)
 
-const extensions = computed(() => [
-  ...getBasicSetup(props.language, (diags) => {
+const languageExtension = computed(() => {
+  if (!codeMirrorModules.value) return null
+  return getLanguageExtension(props.language)
+});
+
+const extensions = computed(() => {
+  if (!codeMirrorModules.value || !themeCompartment.value) return []
+  
+  const setup = getBasicSetup(props.language, (diags: any[]) => {
     emit("diagnostics", diags);
-  }),
-  languageExtension.value,
-  themeCompartment.of(themeExtensions.value),
-  enfyraSyntaxPlugin,
-]);
+  })
+  
+  if (!Array.isArray(setup) || setup.length === 0) {
+    return []
+  }
+  
+  const exts = [...setup]
+  
+  if (languageExtension.value) {
+    exts.push(languageExtension.value)
+  }
+  
+  if (themeExtensions.value.length > 0) {
+    exts.push(themeCompartment.value.of(themeExtensions.value))
+  }
+  
+  if (customHighlightStyle?.value) {
+    exts.push(customHighlightStyle.value)
+  } else if (codeMirrorModules.value?.syntaxHighlighting && codeMirrorModules.value?.defaultHighlightStyle) {
+    exts.push(codeMirrorModules.value.syntaxHighlighting(codeMirrorModules.value.defaultHighlightStyle))
+  }
+  
+  if (enfyraSyntaxPlugin?.value) {
+    exts.push(enfyraSyntaxPlugin.value)
+  }
+  
+  return exts
+});
 
 
 // Watch for theme changes and update theme compartment
 watch(() => colorMode.value, () => {
-  if (editorView.value) {
+  if (editorView.value && themeCompartment.value) {
     editorView.value.dispatch({
-      effects: themeCompartment.reconfigure(themeExtensions.value),
+      effects: themeCompartment.value.reconfigure(themeExtensions.value),
     });
     
     // Update gutters border after theme change
@@ -74,50 +110,117 @@ watch(currentHeight, () => {
     containerRef.value.style.height = currentHeight.value;
   }
   nextTick(() => {
-    if (editorView.value) {
+    if (editorView.value && codeMirrorModules.value?.StateEffect) {
       editorView.value.requestMeasure();
+      if (extensions.value.length > 0) {
+        editorView.value.dispatch({
+          effects: codeMirrorModules.value.StateEffect.reconfigure.of(extensions.value),
+        });
+      }
+      editorView.value.dispatch({});
     }
   });
 });
 
+watch(extensions, (newExts, oldExts) => {
+  if (editorView.value && codeMirrorModules.value?.StateEffect && newExts.length > 0 && !isResizing.value) {
+    const oldLen = oldExts?.length || 0
+    if (oldLen !== newExts.length) {
+      nextTick(() => {
+        if (editorView.value) {
+          editorView.value.dispatch({
+            effects: codeMirrorModules.value.StateEffect.reconfigure.of(newExts),
+          });
+        }
+      });
+    }
+  }
+}, { deep: true });
+
 const resizeObserverRef = ref<ResizeObserver | null>(null);
 
 onMounted(async () => {
-  // Wait a bit to ensure computed values are updated
-  await nextTick();
-  await new Promise(resolve => setTimeout(resolve, 50));
-  
-  createEditor(extensions.value);
-  watchExtensions(extensions);
-  if (containerRef.value) {
-    containerRef.value.style.height = currentHeight.value;
-  }
-  
-  await nextTick();
-  if (editorRef.value) {
-    editorRef.value.style.height = "100%";
-  }
-  
-  if (editorRef.value && containerRef.value) {
-    resizeObserverRef.value = new ResizeObserver(() => {
-      if (editorView.value && !isResizing.value) {
-        editorView.value.requestMeasure();
-      }
-    });
-    resizeObserverRef.value.observe(containerRef.value);
-  }
-  
-  // Force update gutters border after editor is created
-  await nextTick();
-  await new Promise(resolve => setTimeout(resolve, 100));
-  if (editorView.value) {
-    const gutters = editorView.value.dom.querySelector('.cm-gutters');
-    if (gutters) {
-      const isDark = colorMode.value === 'dark';
-      (gutters as HTMLElement).style.borderRight = isDark 
-        ? '1px solid rgba(255, 255, 255, 0.08)' 
-        : '1px solid #e5e7eb';
+  try {
+    // Initialize CodeMirror first
+    await initCodeMirror()
+    
+    // Wait for CodeMirror to load if still loading
+    if (loadingCodeMirror.value) {
+      await new Promise((resolve) => {
+        const unwatch = watch(loadingCodeMirror, (loading) => {
+          if (!loading) {
+            unwatch()
+            resolve(undefined)
+          }
+        })
+      })
     }
+    
+    // Wait for modules to be ready and extensions to be computed
+    await nextTick();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    // Wait until extensions are ready
+    let retries = 0
+    while (extensions.value.length === 0 && retries < 10) {
+      await new Promise(resolve => setTimeout(resolve, 50))
+      await nextTick()
+      retries++
+    }
+    
+    if (codeMirrorModules.value && extensions.value.length > 0) {
+      createEditor(extensions.value);
+      watchExtensions(extensions);
+    } else {
+      console.warn('CodeMirror extensions not ready yet, will retry on next tick')
+      await nextTick()
+      if (codeMirrorModules.value && extensions.value.length > 0) {
+        createEditor(extensions.value);
+        watchExtensions(extensions);
+      }
+    }
+    
+    if (containerRef.value) {
+      containerRef.value.style.height = currentHeight.value;
+    }
+    
+    await nextTick();
+    if (editorRef.value) {
+      editorRef.value.style.height = "100%";
+    }
+    
+    if (editorRef.value && containerRef.value) {
+      let resizeTimeout: ReturnType<typeof setTimeout> | null = null
+      resizeObserverRef.value = new ResizeObserver(() => {
+        if (editorView.value && !isResizing.value) {
+          if (resizeTimeout) clearTimeout(resizeTimeout)
+          resizeTimeout = setTimeout(() => {
+            editorView.value?.requestMeasure();
+            if (codeMirrorModules.value?.StateEffect && extensions.value.length > 0) {
+              editorView.value?.dispatch({
+                effects: codeMirrorModules.value.StateEffect.reconfigure.of(extensions.value),
+              });
+            }
+          }, 100)
+        }
+      });
+      resizeObserverRef.value.observe(containerRef.value);
+    }
+    
+    // Force update gutters border after editor is created
+    await nextTick();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    if (editorView.value) {
+      const gutters = editorView.value.dom.querySelector('.cm-gutters');
+      if (gutters) {
+        const isDark = colorMode.value === 'dark';
+        (gutters as HTMLElement).style.borderRight = isDark 
+          ? '1px solid rgba(255, 255, 255, 0.08)' 
+          : '1px solid #e5e7eb';
+      }
+    }
+  } catch (error) {
+    console.error('Error initializing CodeMirror editor:', error)
   }
 });
 
@@ -238,11 +341,13 @@ function handleMouseUp(e?: MouseEvent) {
   }
   
   nextTick(() => {
-    if (editorView.value) {
+    if (editorView.value && codeMirrorModules.value?.StateEffect) {
       editorView.value.requestMeasure();
-      editorView.value.dispatch({
-        effects: StateEffect.reconfigure.of(extensions.value),
-      });
+      if (extensions.value.length > 0) {
+        editorView.value.dispatch({
+          effects: codeMirrorModules.value.StateEffect.reconfigure.of(extensions.value),
+        });
+      }
       editorView.value.dispatch({});
     }
   });

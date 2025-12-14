@@ -5,6 +5,7 @@ declare global {
   }
 }
 import { ensureString } from "../../utils/components/form";
+import { enfyraConfig } from "../../../enfyra.config";
 
 const props = defineProps<{
   modelValue: string | null;
@@ -241,7 +242,7 @@ onMounted(async () => {
         }
       `,
       icons_url: "/tinymce/icons/default/icons.min.js",
-      plugins: ["link", "lists", "code", "table"],
+      plugins: enfyraConfig.richText?.plugins,
       skin: isDark ? "oxide-dark" : "oxide",
       external_plugins: {
         link: "/tinymce/plugins/link/plugin.min.js",
@@ -249,16 +250,84 @@ onMounted(async () => {
         code: "/tinymce/plugins/code/plugin.min.js",
         table: "/tinymce/plugins/table/plugin.min.js",
       },
-      toolbar:
-        "undo redo  | bold italic underline | " +
-        "bullist numlist | link table | code",
+      toolbar: enfyraConfig.richText?.toolbar,
       menubar: false,
       height: initialHeight,
       resize: false,
       readonly: props.disabled ?? false,
       license_key: "gpl",
+      formats: (() => {
+        const formats = enfyraConfig.richText?.formats;
+        if (!formats) return undefined;
+        
+        const processedFormats: any = {};
+        const theme = colorMode.value as 'light' | 'dark';
+        
+        Object.keys(formats).forEach((key) => {
+          const format = formats[key];
+          if (!format) return;
+          
+          processedFormats[key] = {};
+          
+          if (format.block !== undefined) {
+            processedFormats[key].block = format.block === true ? key : (typeof format.block === 'string' ? format.block : key);
+          } else if (format.wrapper !== undefined) {
+            processedFormats[key].wrapper = format.wrapper === true ? key : (typeof format.wrapper === 'string' ? format.wrapper : key);
+          } else if (format.inline !== undefined) {
+            processedFormats[key].inline = format.inline === true ? key : (typeof format.inline === 'string' ? format.inline : key);
+          } else {
+            processedFormats[key].inline = key;
+          }
+          
+          if (format.classes) {
+            if (typeof format.classes === 'function') {
+              const classes = format.classes(theme);
+              processedFormats[key].classes = Array.isArray(classes) ? classes : [classes];
+            } else {
+              processedFormats[key].classes = Array.isArray(format.classes) ? format.classes : [format.classes];
+            }
+          }
+          
+          if (format.attributes) {
+            processedFormats[key].attributes = format.attributes;
+          }
+        });
+        
+        return processedFormats;
+      })(),
       setup(editor: any) {
         editorRef.value = editor;
+
+        const customButtons = enfyraConfig.richText?.customButtons || [];
+        const buttonActions = enfyraConfig.richText?.buttonActions || {};
+        
+        customButtons.forEach((buttonConfig) => {
+          const { name, text, tooltip, format, onAction, params } = buttonConfig;
+          
+          let buttonOnAction: any;
+          
+          if (format) {
+            buttonOnAction = function() {
+              editor.execCommand('mceToggleFormat', false, format);
+            };
+          } else if (onAction) {
+            if (typeof onAction === 'function') {
+              buttonOnAction = onAction;
+            } else if (typeof onAction === 'string') {
+              buttonOnAction = function() {
+                editor.execCommand(onAction, false, ...(params || []));
+              };
+            }
+          } else {
+            buttonOnAction = function() {};
+          }
+          
+          editor.ui.registry.addButton(name, {
+            text: text || name,
+            tooltip: tooltip || text || name,
+            onAction: buttonOnAction,
+          });
+        });
 
         editor.on("init", () => {
           try {
@@ -292,6 +361,54 @@ onMounted(async () => {
                       existingStyle.remove();
                     }
                     
+                    const formats = enfyraConfig.richText?.formats;
+                    let formatCss = '';
+                    if (formats) {
+                      const theme = colorMode.value as 'light' | 'dark';
+                      Object.keys(formats).forEach((key) => {
+                        const format = formats[key];
+                        if (!format) return;
+                        
+                        let tagName = key;
+                        if (format.block !== undefined) {
+                          tagName = format.block === true ? key : (typeof format.block === 'string' ? format.block : key);
+                        } else if (format.wrapper !== undefined) {
+                          tagName = format.wrapper === true ? key : (typeof format.wrapper === 'string' ? format.wrapper : key);
+                        } else if (format.inline !== undefined) {
+                          tagName = format.inline === true ? key : (typeof format.inline === 'string' ? format.inline : key);
+                        }
+                        
+                        if (format.css) {
+                          const cssObj = typeof format.css === 'function' ? format.css(theme) : format.css;
+                          const cssRules = Object.entries(cssObj)
+                            .map(([prop, value]) => {
+                              const kebabProp = prop.replace(/([A-Z])/g, '-$1').toLowerCase();
+                              return `${kebabProp}: ${value}`;
+                            })
+                            .join('; ');
+                          
+                          formatCss += `#tinymce ${tagName} { ${cssRules}; }\n`;
+                        }
+                        
+                        if (format.classStyles) {
+                          Object.keys(format.classStyles).forEach((className) => {
+                            const classStyle = format.classStyles?.[className];
+                            if (!classStyle) return;
+                            
+                            const cssObj = typeof classStyle === 'function' ? classStyle(theme) : classStyle;
+                            const cssRules = Object.entries(cssObj)
+                              .map(([prop, value]) => {
+                                const kebabProp = prop.replace(/([A-Z])/g, '-$1').toLowerCase();
+                                return `${kebabProp}: ${value}`;
+                              })
+                              .join('; ');
+                            
+                            formatCss += `#tinymce ${tagName}.${className} { ${cssRules}; }\n`;
+                          });
+                        }
+                      });
+                    }
+                    
                     const style = iframeDoc.createElement('style');
                     style.id = 'custom-content-style';
                     style.textContent = `
@@ -301,6 +418,7 @@ onMounted(async () => {
                       #tinymce * {
                         color: ${isDark ? 'rgba(255, 255, 255, 0.9)' : 'rgb(31, 41, 55)'} !important;
                       }
+                      ${formatCss}
                     `;
                     iframeDoc.head.appendChild(style);
                   }

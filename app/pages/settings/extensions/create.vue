@@ -40,6 +40,12 @@
           })
       "
     />
+
+    <!-- Preview Modal -->
+    <ExtensionPreviewModal
+      v-model="showPreviewModal"
+      :code="createForm?.code || ''"
+    />
   </div>
 </template>
 
@@ -59,6 +65,7 @@ const createErrors = ref<Record<string, string>>({});
 // Upload modal state
 const showUploadModal = ref(false);
 const uploadLoading = ref(false);
+const showPreviewModal = ref(false);
 
 const { generateEmptyForm, validate } = useSchema(tableName);
 const { registerPageHeader } = usePageHeaderRegistry();
@@ -68,7 +75,34 @@ registerPageHeader({
   gradient: "purple",
 });
 
-useHeaderActionRegistry({
+useHeaderActionRegistry([
+  {
+    id: "upload-extension",
+    label: "Upload",
+    icon: "lucide:upload",
+    variant: "solid",
+    color: "secondary",
+    onClick: () => (showUploadModal.value = true),
+    permission: {
+      and: [
+        {
+          route: "/extension_definition",
+          actions: ["create"],
+        },
+      ],
+    },
+  },
+  {
+    id: "preview-extension",
+    label: "Preview",
+    icon: "lucide:eye",
+    variant: "outline",
+    color: "primary",
+    size: "md",
+    onClick: () => (showPreviewModal.value = true),
+    disabled: computed(() => !createForm.value?.code),
+  },
+  {
   id: "save-extension",
   label: "Save",
   icon: "lucide:save",
@@ -84,24 +118,8 @@ useHeaderActionRegistry({
       },
     ],
   },
-});
-
-useHeaderActionRegistry({
-  id: "upload-extension",
-  label: "Upload",
-  icon: "lucide:upload",
-  variant: "solid",
-  color: "secondary",
-  onClick: () => (showUploadModal.value = true),
-  permission: {
-    and: [
-      {
-        route: "/extension_definition",
-        actions: ["create"],
       },
-    ],
-  },
-});
+]);
 
 // Setup useApi composable at top level
 const {

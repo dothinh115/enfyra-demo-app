@@ -10,10 +10,8 @@ export default defineNuxtConfig({
     modules: [
     "@nuxt/icon",
     "@nuxt/ui",
-    "@nuxtjs/tailwindcss",
     "nuxt-codemirror",
     "@enfyra/sdk-nuxt",
-    // "../enfyra-sdk-nuxt/dist/module.mjs",
   ],
   fonts: {
     families: [
@@ -58,7 +56,7 @@ export default defineNuxtConfig({
     storageKey: "nuxt-color-mode",
   },
   ssr: false,
-  css: ["assets/css/main.css", "assets/css/highlight.css"],
+  css: ["assets/css/main.css"],
   app: {
     head: {
       htmlAttrs: {

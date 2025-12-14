@@ -9,6 +9,7 @@ const { updateFileTimestamp } = useGlobalState();
 const { getPreviewUrl } = useFileUrl();
 const fileId = route.params.id as string;
 const { registerPageHeader } = usePageHeaderRegistry();
+const { getIdFieldName } = useDatabase();
 
 const {
   data: file,
@@ -16,13 +17,16 @@ const {
   error,
   execute,
 } = useApi(`/file_definition`, {
-  query: {
-    filter: {
-      id: {
-        _eq: fileId,
+  query: computed(() => {
+    const idField = getIdFieldName();
+    return {
+      filter: {
+        [idField]: {
+          _eq: fileId,
+        },
       },
-    },
-  },
+    };
+  }),
   errorContext: "Fetch File",
 });
 
@@ -96,6 +100,24 @@ useHeaderActionRegistry([
     show: computed(() => hasFormChanges.value),
   },
   {
+    id: "delete-file",
+    label: "Delete",
+    icon: "lucide:trash",
+    variant: "solid",
+    color: "error",
+    size: "md",
+    onClick: deleteFile,
+    loading: computed(() => deleteLoading.value),
+    permission: {
+      and: [
+        {
+          route: "/file_definition",
+          actions: ["delete"],
+        },
+      ],
+    },
+  },
+  {
     id: "save-file",
     label: "Save",
     icon: "lucide:save",
@@ -110,25 +132,6 @@ useHeaderActionRegistry([
         {
           route: "/file_definition",
           actions: ["update"],
-        },
-      ],
-    },
-  },
-
-  {
-    id: "delete-file",
-    label: "Delete",
-    icon: "lucide:trash",
-    variant: "solid",
-    color: "error",
-    size: "md",
-    onClick: deleteFile,
-    loading: computed(() => deleteLoading.value),
-    permission: {
-      and: [
-        {
-          route: "/file_definition",
-          actions: ["delete"],
         },
       ],
     },

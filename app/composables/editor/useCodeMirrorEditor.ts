@@ -1,19 +1,22 @@
-import { EditorView } from "@codemirror/view";
-import { StateEffect } from "@codemirror/state";
-
 interface UseCodeMirrorEditorOptions {
   modelValue?: string;
   language?: "javascript" | "vue" | "json" | "html";
   height?: string;
   emit: (event: "update:modelValue" | "diagnostics", ...args: any[]) => void;
+  codeMirrorModules?: any;
 }
 
 export function useCodeMirrorEditor(options: UseCodeMirrorEditorOptions) {
-  const { modelValue, language, height, emit } = options;
+  const { modelValue, language, height, emit, codeMirrorModules } = options;
 
   const code = ref(ensureString(modelValue));
   const editorRef = ref<HTMLDivElement>();
-  const editorView = ref<EditorView>();
+  const editorView = ref<any>();
+  
+  const modules = computed(() => {
+    if (!codeMirrorModules) return null
+    return isRef(codeMirrorModules) ? codeMirrorModules.value : codeMirrorModules
+  })
 
   watch(
     () => modelValue,
@@ -25,30 +28,43 @@ export function useCodeMirrorEditor(options: UseCodeMirrorEditorOptions) {
     }
   );
 
-  watch(code, (val) => {
+  watch(code, (val, oldVal) => {
+    if (val === oldVal) return;
     emit("update:modelValue", val);
-  });
+  }, { flush: 'post' });
 
   function createEditor(extensions: any[]) {
-    if (editorRef.value) {
-      editorView.value = new EditorView({
-        doc: code.value,
-        extensions: [
-          ...extensions,
-          EditorView.updateListener.of((update) => {
-            if (update.docChanged) {
-              code.value = update.state.doc.toString();
-            }
-          }),
-        ],
-        parent: editorRef.value,
-      });
-      
-      if (editorRef.value.parentElement) {
-        const parent = editorRef.value.parentElement;
-        if (parent.style.height) {
-          editorRef.value.style.height = parent.style.height;
+    const m = modules.value
+    if (!m?.EditorView || !editorRef.value) return
+    
+    const updateListenerExtension = m.EditorView.updateListener.of((update: any) => {
+      if (update.docChanged) {
+        code.value = update.state.doc.toString();
+      }
+    });
+    
+    editorView.value = new m.EditorView({
+      doc: code.value,
+      extensions: [
+        ...extensions,
+        updateListenerExtension,
+      ],
+      parent: editorRef.value,
+    });
+    
+    if (editorView.value?.dom) {
+      editorView.value.dom.addEventListener('keyup', () => {
+        const newCode = editorView.value?.state?.doc?.toString() || '';
+        if (newCode !== code.value) {
+          code.value = newCode;
         }
+      });
+    }
+    
+    if (editorRef.value.parentElement) {
+      const parent = editorRef.value.parentElement;
+      if (parent.style.height) {
+        editorRef.value.style.height = parent.style.height;
       }
     }
   }
@@ -57,9 +73,10 @@ export function useCodeMirrorEditor(options: UseCodeMirrorEditorOptions) {
     watch(
       extensions,
       (newExtensions) => {
-        if (editorView.value) {
+        const m = modules.value
+        if (editorView.value && m?.StateEffect) {
           editorView.value.dispatch({
-            effects: StateEffect.reconfigure.of(newExtensions),
+            effects: m.StateEffect.reconfigure.of(newExtensions),
           });
         }
       },
@@ -67,10 +84,10 @@ export function useCodeMirrorEditor(options: UseCodeMirrorEditorOptions) {
     );
   }
 
-  watch(code, (newCode) => {
+  watch(code, (newCode, oldCode) => {
     if (editorView.value) {
       const currentCode = editorView.value.state.doc.toString();
-      if (currentCode !== newCode) {
+      if (currentCode !== newCode && newCode !== oldCode) {
         editorView.value.dispatch({
           changes: {
             from: 0,
