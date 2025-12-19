@@ -30,7 +30,7 @@ export default defineNuxtConfig({
     // },
     {
       route: "**",
-      handler: "server/middleware/server-id.ts",
+      handler: "~/server/middleware/server-id.ts",
       middleware: true,
     },
     {
