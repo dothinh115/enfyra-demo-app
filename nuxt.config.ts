@@ -53,6 +53,31 @@ export default defineNuxtConfig({
       handler: "~/server/api/extension_definition/preview.post.ts",
       method: "post",
     },
+    {
+      route: "/api/package_definition",
+      handler: "~/server/api/package_definition.post.ts",
+      method: "post",
+    },
+    {
+      route: "/api/package_definition/**",
+      handler: "~/server/api/package_definition/[id].patch.ts",
+      method: "patch",
+    },
+    {
+      route: "/api/package_definition/**",
+      handler: "~/server/api/package_definition/[id].delete.ts",
+      method: "delete",
+    },
+    {
+      route: "/api/packages",
+      handler: "~/server/api/packages.get.ts",
+      method: "get",
+    },
+    {
+      route: "**",
+      handler: "~/server/middleware/server-id.ts",
+      middleware: true,
+    },
   ],
   colorMode: {
     preference: "dark",
@@ -117,6 +142,15 @@ export default defineNuxtConfig({
     public: {
       dbType: process.env.DB_TYPE || 'mysql',
       baseUrl: process.env.NUXT_PUBLIC_BASE_URL,
+    },
+  },
+  enfyraSDK: {
+    apiUrl: process.env.API_URL,
+    apiPrefix: '/api'
+  },
+  routeRules: {
+    '/api/packages/**': {
+      swr: 86400,
     },
   },
 });
