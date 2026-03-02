@@ -44,3 +44,5 @@ deploy.sh
 tmp/
 
 CLAUDE.md
+
+server-config.md
